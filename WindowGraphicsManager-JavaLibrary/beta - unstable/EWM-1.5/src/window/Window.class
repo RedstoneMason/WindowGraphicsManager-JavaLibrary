@@ -1,0 +1,273 @@
+package window;
+
+import java.awt.Canvas;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Graphics;
+import java.awt.Toolkit;
+import java.awt.event.KeyEvent;
+import java.awt.event.KeyListener;
+import java.awt.image.BufferStrategy;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+
+import javax.swing.JFrame;
+
+public class Window extends Canvas implements KeyListener, Runnable {
+	private static final long serialVersionUID = 1L;
+	private JFrame frame = new JFrame();
+	private String savePath = "";
+	private Color background = Color.black;
+	private boolean reqTFullScreen, running, autoSave = false, load = false, fullScreen;
+	private int fps, tps = 20, width, height, x, y, saveTimer;
+	private double mspt, mspf;
+	private MethodInvoke tickMethod, renderMethod;
+
+	// CONSTRUCTOR
+	public Window(Object parentClass) {
+		String path = "";
+		if(parentClass != null)
+			path = parentClass.getClass().getName();
+		tickMethod = new MethodInvoke(path+".tick", parentClass);
+		renderMethod = new MethodInvoke(path+".render", parentClass);
+		Dimension ss = Toolkit.getDefaultToolkit().getScreenSize();
+		x = ss.width/2-500;
+		y = ss.height/2-375;
+		width = 1000;
+		height = 750;
+		frame.add(this);
+		frame.setDefaultCloseOperation(3);
+		frame.setTitle("Window 1.5");
+		frame.setSize(width, height);
+		frame.setLocation(x, y);
+		frame.setVisible(true);
+		this.addKeyListener(this);
+		this.requestFocus();
+		Toolkit.getDefaultToolkit().setDynamicLayout(false);
+	}
+
+	// PUBLIC
+	public void start() {
+		if(running)
+			return;
+		if(load)
+			load();
+		Thread r = new Thread(this);
+		r.start();
+	}
+	public void maximize() {
+		frame.setExtendedState(JFrame.MAXIMIZED_BOTH);
+	}
+	public void load() {
+		File save = new File(savePath);
+		try {
+			BufferedReader br = new BufferedReader(new FileReader(save));
+			int x = Integer.parseInt(br.readLine());
+			int y = Integer.parseInt(br.readLine());
+			int w = Integer.parseInt(br.readLine());
+			int h = Integer.parseInt(br.readLine());
+			int ext = Integer.parseInt(br.readLine());
+			int state = Integer.parseInt(br.readLine());
+			int fs = Integer.parseInt(br.readLine());
+			frame.setLocation(x, y);
+			frame.setSize(w, h);
+			frame.setExtendedState(ext);
+			frame.setState(state);
+			width = w;
+			height = h;
+			this.x = x;
+			this.y = y;
+			if(fs == 1)
+				setFullScreen(true);
+			this.fullScreen = (fs == 1);
+			br.close();
+		} catch(IOException | NullPointerException e) {}
+		catch(NumberFormatException e) {
+			e.printStackTrace();
+		}
+	}
+	public void run() {
+		if(running)
+			return;
+		running = true;
+		long lastTime = System.nanoTime();
+		long timer = System.currentTimeMillis();
+		double delta = 0;
+		int frames = 0;
+		while(running) {
+			double ns = 1000000000/tps;
+			long now = System.nanoTime();
+			delta += (now-lastTime)/ns;
+			lastTime = now;
+			while(delta > 0) {
+				tick();
+				delta--;
+			}
+			render();
+			frames++;
+			if(System.currentTimeMillis()-timer > 1000) {
+				timer += 1000;
+				fps = frames;
+				frames = 0;
+			}
+		}
+	}
+	public void save() {
+		File save = new File(savePath);
+		File saveDir = save.getParentFile();
+		if(!saveDir.exists()) {
+			System.out.println("Created directory at '"+saveDir+"'");
+			createDirectory(saveDir);
+		}
+		if(!save.exists())
+			System.out.println("Created save at '"+save+"'");
+		try {
+			FileWriter fw = new FileWriter(save);
+			fw.write(x+"\r"+y+"\r"+width+"\r"+height+"\r"+frame.getExtendedState()+"\r"+frame.getState()+"\r"+(fullScreen ? 1 : 0));
+			fw.close();
+		} catch(IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	// PRIVATE
+	private void tick() {
+		long msStart = System.currentTimeMillis();
+		if(autoSave) {
+			saveTimer++;
+			if(saveTimer > 20) {
+				save();
+				saveTimer = 0;
+			}
+		}
+		tickMethod.invoke(null);
+		mspt = System.currentTimeMillis()-msStart;
+	}
+	private void render() {
+		if(frame.getExtendedState() == 0 & frame.getState() == 0 & !fullScreen) {
+			width = frame.getWidth();
+			height = frame.getHeight();
+			x = frame.getX();
+			y = frame.getY();
+		}
+		if(reqTFullScreen) {
+			setFullScreen(!isFullScreen());
+			reqTFullScreen = false;
+			requestFocus();
+		}
+		long msStart = System.currentTimeMillis();
+		BufferStrategy bs = getBufferStrategy();
+		if(bs == null) {
+			createBufferStrategy(3);
+			return;
+		}
+		Graphics g = bs.getDrawGraphics();
+		if(background != null) {
+			g.setColor(background);
+			g.fillRect(0, 0, frame.getWidth(), frame.getHeight());
+		}
+		renderMethod.invoke(g);
+		g.dispose();
+		bs.show();
+		mspf = System.currentTimeMillis()-msStart;
+	}
+	private void createDirectory(File path) {
+		try {
+			Files.createDirectory(Paths.get(path.getPath()));
+		} catch(IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	// SETTERS
+	public void setLocation(int x, int y) {
+		frame.setLocation(x, y);
+	}
+	public void setSize(int width, int height) {
+		frame.setSize(width, height);
+	}
+	public void setTitle(String title) {
+		frame.setTitle(title);
+	}
+	public void setRenderMethod(String path, Object parent) {
+		this.renderMethod = new MethodInvoke(path, parent);
+	}
+	public void setTickMethod(String path, Object parent) {
+		this.tickMethod = new MethodInvoke(path, parent);
+	}
+	public void setBackground(Color color) {
+		this.background = color;
+	}
+	public void setTPS(int tps) {
+		this.tps = tps;
+	}
+	public void setSavePath(String savePath) {
+		this.savePath = savePath;
+		this.autoSave = true;
+		this.load = true;
+	}
+	public void setFullScreen(boolean fullScreen) {
+		if(fullScreen) {
+			frame.setExtendedState(6);
+			frame.dispose();
+			frame.setUndecorated(true);
+			frame.setVisible(true);
+		} else {
+			frame.setExtendedState(0);
+			frame.dispose();
+			frame.setUndecorated(false);
+			frame.setVisible(true);
+			frame.setSize(width, height);
+			frame.setLocation(x, y);
+		}
+		this.fullScreen = fullScreen;
+	}
+	public void setAutoSave(boolean autoSave) {
+		this.autoSave = autoSave;
+	}
+
+	// GETTERS
+	public double getMSPT() {
+		return this.mspt;
+	}
+	public double getMSPF() {
+		return this.mspf;
+	}
+	public int getFPS() {
+		return this.fps;
+	}
+	public int getTPS() {
+		return this.tps;
+	}
+	public int getWidth() {
+		return this.frame.getWidth();
+	}
+	public int getHeight() {
+		return this.frame.getHeight();
+	}
+	public int getX() {
+		return this.frame.getX();
+	}
+	public int getY() {
+		return this.frame.getY();
+	}
+	public boolean isFullScreen() {
+		return this.fullScreen;
+	}
+	public JFrame getFrame() {
+		return this.frame;
+	}
+	
+	// KEY INPUT
+	public void keyPressed(KeyEvent e) {
+		if(e.getKeyCode() == KeyEvent.VK_F11)
+			reqTFullScreen = true;
+	}
+	public void keyReleased(KeyEvent e) {}
+	public void keyTyped(KeyEvent e) {}
+}
